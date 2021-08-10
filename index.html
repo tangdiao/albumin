@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+
+.axis text {
+  font: 10px sans-serif;
+}
+
+.axis path, .axis line {
+  fill: none;
+  stroke: #000;
+  shape-rendering: crispEdges;
+}
+
+</style>
+</head>
+<body>
+<div id="tooltip" style="position:absolute; z-index: 10000;
+    top: -200px; left: -200px;
+    padding: 5px; border-left: 4px solid #a2a2a2; background-color: #f1f1f1;">
+</div>
+<script src="https://unpkg.com/d3@4.13.0/build/d3.min.js" type="application/javascript"></script>
+<script src ="https://unpkg.com/textures@1.2.0/dist/textures.js"></script >
+<script src="https://unpkg.com/moment@2.29.1/moment.js"></script>
+<script>
+    const windowWidth = document.body.clientWidth-200;
+
+    var margin = {top: 100, right: 100, bottom: 100, left: 200},
+        width = windowWidth - margin.left - margin.right,
+        height = 5000 - margin.top - margin.bottom;
+
+    var t = textures
+        .lines()
+        .orientation("vertical", "horizontal")
+        .size(4)
+        .strokeWidth(1)
+        .shapeRendering("crispEdges")
+        .stroke("#d95f02");
+
+    const perLine = height/38;
+
+    d3.queue()
+        .defer(d3.csv, 'event.csv')
+        .await((error,eventData) => {
+
+            //1. 接受数据并转换
+            let events = [];
+            for(let i=0;i<eventData.length;i++){
+                const patientId = eventData[i].PATIENT_ID;
+                const date = dateToStr(moment(new Date(eventData[i].RESULT_DATE_TIME1.split(" ")[0].replaceAll('/','-'))));
+                // const reading = parseFloat(albuminData[i].albuminReading);
+                const cn_r = parseInt(eventData[i]["肠内+人血白蛋白"]);
+                const cw_r = parseInt(eventData[i]["肠外+人血白蛋白"]);
+                const r = parseInt(eventData[i]["人血白蛋白"]);
+                const cn_cw_r = parseInt(eventData[i]["肠内+肠外+人血白蛋白"]);
+                const cw = parseInt(eventData[i]["肠外"]);
+                const cn_cw = parseInt(eventData[i]["肠内+肠外"]);
+                const cn = parseInt(eventData[i]["肠内"]);
+                const albumin = parseFloat(eventData[i]["白蛋白"]);
+                const preds = parseFloat(eventData[i]["preds"])
+
+                const aDay = {patientId:patientId,date:date,cn_r:cn_r,cw_r:cw_r,r:r, cn_cw_r:cn_cw_r,cw:cw,cn_cw:cn_cw,cn:cn,albumin:albumin,preds:preds};
+                events.push(aDay);
+            }
+
+            events = groupDataInPatientid(events)
+            console.log(events)
+
+
+            //2. 绘制基本的容器
+            var svg = d3.select("body").append("svg")
+                .attr("width", width + margin.left + margin.right)
+                .attr("height", height + margin.top + margin.bottom)
+                .append("g")
+                .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+            svg.call(t);
+
+            let inDetailView="";
+            /*创建每一个患者的行*/
+            const dayGroups = svg.selectAll('.patient-vis')//就是页面上的一行。
+                .data(events, d => d.patientId);
+            dayGroups.exit().remove();
+
+            const dayGroupsEnter = dayGroups.enter()
+                .append('g')
+                .attr('class', 'patient-vis')
+                .attr('patientId', d => d.patientId);
+
+            dayGroupsEnter.append('rect')
+                .attr('x', 0)
+                .attr('y', -perLine)
+                .attr('width', width)
+                .attr('height', perLine)//之前计算出的
+                .attr('fill', '#000')
+                .attr('opacity', 0.0)//最开始就看不见，后面mouseover后就能看见了。
+                .on('mouseover', (d, i, nodes) => {//就是14个rect,设置它的不透明度。
+                    d3.select(nodes[i]).attr('opacity', 0.05);
+                })
+                .on('mouseout', (d, i, nodes) => {
+                    if (inDetailView !== d.patientId) {
+                        d3.select(nodes[i]).attr('opacity', 0.00);
+                    }
+                })
+                .on('click', (d, i, nodes) => {
+                    inDetailView = d.patientId;
+                    dayGroupsEnter.select('rect').attr('opacity', 0);
+                    d3.select(nodes[i]).attr('opacity', 0.05);//当前点击的为显示的，其他的在之前就设置为0了
+                });
+
+            /*可视化一行的数据*/
+            dayGroupsEnter.merge(dayGroups)
+                .transition()
+                .attr('transform', (d, i) => `translate(0, ${perLine * i})`)
+                .each((d, i, dom) => {
+                    visualizeLine(d.patientId, d3.select(dom[i]), i, perLine);
+                });
+
+
+
+            function visualizeLine(patientId, canvas, nthPatient, yOffset = 0) {
+
+                let lineData = events[nthPatient].events;
+                // console.log(lineData)
+
+                //1. 绘制坐标轴
+                let maxY=50
+                let hY = maxY;
+                let xScale = d3.scaleLinear()
+                    .domain([0, 11])
+                    .range([0, width]);
+
+                let yScale = d3.scaleLinear()
+                    .domain([35, maxY])
+                    .range([hY,0])
+                let yScale2 = d3.scaleLinear()
+                    .domain([35, maxY])
+                    .range([0,hY])
+
+                canvas.append("g")
+                    .attr("class", "x axis")
+                    .call(d3.axisBottom().tickSizeInner(14).scale(xScale));
+
+                canvas.append("g")
+                    .attr('transform',`translate(0,${-hY})`)
+                    .attr("class", "y axis")
+                    .call(d3.axisLeft().ticks(6).scale(yScale).tickValues([35,40,45,50]));
+
+                canvas.append("text")
+                    .attr('transform',`translate(5,${yScale(65)})`)
+                    .text(lineData[0].patientId)
+                    .attr('font-family',"华文隶书")
+                    .attr('opacity',0.85)
+                    .attr('font-size', '1em')
+
+
+                let canvasg = canvas.append('g');
+
+
+                //2.绘制用药事件
+            canvasg.selectAll('rect').data(lineData).enter()
+                    .append('rect')
+                    .attr('symbols',d=>d.date)
+                    .attr('width',20)
+                    .attr('height',20)
+                    .attr("class",'event')
+                    .attr('stroke',"#001852")
+                    .attr('stroke-width',2)
+                    .attr('transform',(d,i)=>`translate(${i*xScale(1)-10},-10)`)
+                    .attr('fill',d=>eventColor(d))
+                    .attr('display',d=>displayAllNone(d))
+
+                canvas.selectAll('rect').exit().remove();
+
+            // 3. 绘制真实曲线
+                let line = d3.line()
+                    // .curve(d3.curveCatmullRom.alpha(0.5))
+                    .defined(d => !isNaN(d.albumin))
+                    .x((d,i) => xScale(i))
+                    .y(d => -yScale2(d.albumin))
+
+                canvasg.append("path")
+                    .datum(lineData)
+                    .attr("fill", "none")
+                    .attr('class','line_path')
+                    .attr("stroke", "#626c91")
+                    .attr("stroke-width", 2)
+                    .attr('opacity',0.85)
+                    // .style("stroke-dasharray","4,5")
+                    .attr("stroke-linejoin", "round")
+                    .attr("stroke-linecap", "round")
+                    .attr("d", line);
+
+                canvasg
+                    .selectAll('circle')
+                    .data(lineData)
+                    .enter()
+                    .append('circle')
+                    .attr('r',3)
+                    .attr('class','readings')
+                    .attr('fill',"#d95f02")
+                    .attr('opacity',1)
+                    .attr('transform',(d,i)=>`translate(${xScale(i)},${-yScale2(d.albumin)})`)
+
+                //3.绘制预测曲线
+                let line2 = d3.line()
+                    // .curve(d3.curveCatmullRom.alpha(0))
+                    // .curve(d3.curveLinear())
+                    .defined(d => d.preds!==0)
+                    .x((d,i) => xScale(i))
+                    .y(d => -yScale2(d.preds))
+
+                canvasg.append('g').append("path")
+                    .datum(lineData)
+                    .attr("fill", "none")
+                    .attr('class','line_path')
+                    .attr("stroke", "red")
+                    .attr("stroke-width", 4)
+                    .attr('opacity',0.85)
+                    .style("stroke-dasharray","4,5")
+                    .attr("stroke-linejoin", "round")
+                    .attr("stroke-linecap", "round")
+                    .attr("d", line2);
+
+                canvasg
+                    .selectAll('circle')
+                    .data(lineData)
+                    .enter()
+                    .append('circle')
+                    .attr('r',3)
+                    .attr('class','readings')
+                    .attr('fill',"#d95f02")
+                    .attr('opacity',1)
+                    .attr('transform',(d,i)=>`translate(${xScale(i)},${-yScale2(d.preds)})`)
+                console.log(lineData)
+
+                function eventColor(data) {
+                    let cn = data.cn,
+                        cw = data.cw,
+                        cn_r = data.cn_r,
+                        cw_r = data.cw_r,
+                        r = data.r,
+                        cn_cw_r = data.cn_cw_r,
+                        cn_cw = data.cn_cw;
+
+                    if(cn===1){
+                        return "#9b8bba";
+                    }
+                    if(cw===1){
+                        return "#82d6c3";
+                    }
+                    if(r===1){
+                        return "#d95f02";
+                    }
+                    /*if(cn===0 && cw===0 && cn_r===0 && cw_r===0 && r===0 && cn_cw_r===0 && cn_cw===0){
+                        return "#fff";
+                    }*/
+
+                    return t.url()
+                }
+
+                function displayAllNone(data) {
+                    let judgeString = "";
+                    let cn = data.cn,
+                        cw = data.cw,
+                        cn_r = data.cn_r,
+                        cw_r = data.cw_r,
+                        r = data.r,
+                        cn_cw_r = data.cn_cw_r,
+                        cn_cw = data.cn_cw;
+                    if(cn===0 && cw===0 && cn_r===0 && cw_r===0 && r===0 && cn_cw_r===0 && cn_cw===0){
+                        judgeString = "none";
+                    }else{
+                        judgeString = "block";
+                    }
+                    return judgeString;
+                }
+            }
+
+
+
+        })
+
+
+
+
+
+
+
+    function groupDataInPatientid(data) {
+        const organizedData = [];
+        let arr = [];
+        data.forEach((d,i)=>{
+            organizedData[d.patientId.substring(6,10)] = {
+                patientId: d.patientId,
+                events: [],
+            };
+        });
+
+        data.forEach((d) => {
+            const dateStr = d.patientId.substring(6,20);
+            organizedData[dateStr].events.push(d);
+        });
+        organizedData.forEach(d=>{
+            arr.push(d)
+        })
+
+        return arr;
+    }
+
+    function dateToStr(date) {
+        return date.format('YYYY-MM-DD');
+    }
+
+
+
+
+</script>
+
+</body>
+
+</html>
